@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Air Pen (Final)</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+
+  <style>
+    body { margin: 0; background: #050301; overflow: hidden; }
+
+    video {
+      position: absolute;
+      opacity: 0; /* FIX for black screen */
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      transform: scaleX(-1);
+      position: absolute;
+      z-index: 1;
+    }
+
+    #ui {
+      position: absolute;
+      z-index: 10;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-family: sans-serif;
+    }
+
+    #textBox {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      font-size: 24px;
+      color: #F5D061;
+      font-family: monospace;
+    }
+  </style>
+</head>
+
+<body>
+
+<div id="ui">
+  🎨 <input type="color" id="colorPicker" value="#F5D061">
+  <button onclick="recognize()">Recognize</button>
+  <button onclick="clearCanvas()">Clear</button>
+  <button onclick="downloadText()">Save</button>
+</div>
+
+<div id="textBox"></div>
+
+<video id="vid" autoplay playsinline></video>
+<canvas id="c"></canvas>
+
+<script>
+var vid = document.getElementById('vid');
+var c = document.getElementById('c');
+var ctx = c.getContext('2d');
+
+var arr = [];
+var cur = [];
+var shift = false;
+var draw = false;
+var sx = null;
+var sy = null;
+
+var color = "#F5D061";
+var textOutput = "";
+
+// 🎨 Color change
+document.getElementById("colorPicker").oninput = function(e) {
+  color = e.target.value;
+};
+
+// ⌨️ Keyboard controls
+window.onkeydown = function(e) {
+  if (e.key == 'Shift') shift = true;
+  if (e.code == 'Space') arr = [];
+}
+
+window.onkeyup = function(e) {
+  if (e.key == 'Shift') shift = false;
+}
+
+// 🧹 Clear
+function clearCanvas() {
+  arr = [];
+}
+
+// 💾 Save
+function downloadText() {
+  var blob = new Blob([textOutput], { type: "text/plain" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "notes.txt";
+  a.click();
+}
+
+// 🧠 Simple recognition
+function recognize() {
+  if (arr.length === 0) return;
+
+  let totalPoints = arr.reduce((sum, stroke) => sum + stroke.length, 0);
+
+  let char = "?";
+  if (totalPoints < 50) char = ".";
+  else if (totalPoints < 150) char = "i";
+  else if (totalPoints < 300) char = "o";
+  else char = "#";
+
+  textOutput += char;
+  document.getElementById("textBox").innerText = textOutput;
+
+  arr = [];
+}
+
+// ✋ Main function
+function run(res) {
+  c.width = window.innerWidth;
+  c.height = window.innerHeight;
+
+  // ✅ Camera feed (fix)
+  ctx.drawImage(res.image, 0, 0, c.width, c.height);
+
+  // overlay
+  ctx.fillStyle = 'rgba(10, 6, 2, 0.95)';  
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 15;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // draw lines
+  for (var i = 0; i < arr.length; i++) {
+    ctx.beginPath();
+    for (var j = 0; j < arr[i].length; j++) {
+      if (j == 0) ctx.moveTo(arr[i][j].x, arr[i][j].y);
+      else ctx.lineTo(arr[i][j].x, arr[i][j].y);
+    }
+    ctx.stroke();
+  }
+
+  if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+    var lm = res.multiHandLandmarks[0];
+
+    drawConnectors(ctx, lm, HAND_CONNECTIONS, {
+      color: 'rgba(255,255,255,0.2)', lineWidth: 2
+    });
+
+    var ind = lm[8];
+    var rx = ind.x * c.width;
+    var ry = ind.y * c.height;
+
+    // smoothing
+    if (sx == null) {
+      sx = rx;
+      sy = ry;
+    } else {
+      sx += (rx - sx) * 0.4;
+      sy += (ry - sy) * 0.4;
+    }
+
+    // pointer
+    ctx.beginPath();
+    ctx.arc(sx, sy, 6, 0, 2 * Math.PI);
+    ctx.fillStyle = shift ? "#fff" : color;
+    ctx.fill();
+
+    // drawing only when SHIFT pressed
+    if (shift) {
+      if (!draw) {
+        draw = true;
+        cur = [];
+        arr.push(cur);
+      }
+      cur.push({x: sx, y: sy});
+    } else {
+      draw = false;
+    }
+
+  } else {
+    draw = false;
+    sx = null;
+  }
+}
+
+// MediaPipe
+var h = new Hands({
+  locateFile: file =>
+    `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+
+h.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.4,
+  minTrackingConfidence: 0.4
+});
+
+h.onResults(run);
+
+// Camera
+var cam = new Camera(vid, {
+  onFrame: async () => {
+    await h.send({ image: vid });
+  },
+  width: 1280,
+  height: 720
+});
+
+cam.start();
+</script>
+
+</body>
+</html>
